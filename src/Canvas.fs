@@ -20,7 +20,7 @@ let private onAnimationFrame tick =
         member __.Dispose() = disposed <- true }
 
 type Canvas =
-    static member Path(ctx: Context, ?fillStyle, ?points: _ seq) =
+    static member Path(ctx: Context, ?fillStyle, ?points: _[]) =
         match points with
         | None -> () // Throw error?
         | Some points ->
@@ -53,7 +53,7 @@ type Canvas =
 
     static member Start<'Msg,'Model>(canvasId: string, init: 'Model, tick: float->'Msg,
                                         update: Update<'Msg,'Model>, view: View<'Msg,'Model>,
-                                        ?subscribe: Browser.HTMLCanvasElement->('Msg->unit)->unit) =
+                                        ?subscribe: Browser.HTMLCanvasElement->('Msg->unit)->'Model->unit) =
 
         let canvasEl = Browser.document.getElementById(canvasId) :?> Browser.HTMLCanvasElement
         let ctx = canvasEl.getContext_2d()
@@ -61,7 +61,7 @@ type Canvas =
         // TODO: Implement asynchronous commands
         let dispatch msg =
             model <- update model msg
-        subscribe |> Option.iter (fun f -> f canvasEl dispatch)
+        subscribe |> Option.iter (fun f -> f canvasEl dispatch model)
         // TODO: Implement pause/resume mechanism
         let disp = onAnimationFrame <| fun delta ->
             model <- tick delta |> update model

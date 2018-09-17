@@ -115,12 +115,12 @@ module Particle =
             render = fun ctx ->
                 Canvas.Path(ctx,
                     fillStyle = !^"white",
-                    points = [
+                    points = [|
                         (-width / 2. * 1.732, -width / 2.)
                         (0. ,0.)
                         (-width / 2. * 1.732, width / 2.)
                         (-width / 2. * 1.2, 0.)
-                    ])
+                    |])
         )
 
 module Demo =
@@ -203,12 +203,14 @@ module Demo =
                             { model.Settings with Size = newSize } }
 
 
-    let view settings ctx dispatch (model : Model) =
+    let view ctx dispatch (model : Model) =
         Canvas.Clear(ctx, model.Settings.CanvasWidth, model.Settings.CanvasHeight)
         for particle in model.Particles do
-            Particle.draw ctx particle model.Particles.Length settings.Size
+            Particle.draw ctx particle model.Particles.Length model.Settings.Size
 
-    let subscribe (canvas: Browser.HTMLCanvasElement) dispatch =
+    let subscribe (canvas: Browser.HTMLCanvasElement) dispatch (model : Model) =
+        canvas.width <- model.Settings.CanvasWidth
+        canvas.height <- model.Settings.CanvasHeight
         canvas.addEventListener_mousemove(fun ev ->
             let bounds : Browser.ClientRect = (ev.target :?> Browser.HTMLElement).getBoundingClientRect()
             { X = ev.clientX - bounds.left
@@ -218,6 +220,5 @@ module Demo =
         )
 
 // App
-let settings = Settings.Default
-Canvas.Start("canvas", Demo.init settings, Demo.Tick,
-            Demo.update, Demo.view settings, subscribe = Demo.subscribe)
+Canvas.Start("canvas", Demo.init Settings.Default, Demo.Tick,
+            Demo.update, Demo.view, subscribe = Demo.subscribe)
