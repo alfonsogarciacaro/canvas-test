@@ -1,69 +1,69 @@
 module Canvas
 
+open Fable.Core
 open Fable.Import
 
-type Context = Browser.CanvasRenderingContext2D
-type Update<'Msg, 'Model> = 'Model -> 'Msg -> 'Model
-type View<'Msg, 'Model> = Context -> ('Msg->unit) -> 'Model -> unit
+type private MainLoop =
+    abstract setBegin: (float -> float -> unit) -> MainLoop
+    abstract setUpdate: (float -> unit) -> MainLoop
+    abstract setDraw: (float -> unit) -> MainLoop
+    abstract setEnd: (float -> bool -> unit) -> MainLoop
+    abstract start: unit -> unit
+    abstract getFPS: unit -> float
+    abstract getMaxAllowedFPS: unit -> float
+    abstract setMaxAllowedFPS: float -> unit
+    abstract getSimulationTimestep: unit -> float
+    abstract setSimulationTimestep: float -> unit
+    abstract resetFrameDelta: unit -> float
 
-let private onAnimationFrame tick =
-    let mutable last = 0.
-    let mutable disposed = false
-    let rec loop ts: unit =
-        if not disposed then
-            if last > 0. then
-                tick (ts - last)
-            last <- ts
-            Browser.window.requestAnimationFrame(loop) |> ignore
-    Browser.window.requestAnimationFrame(loop) |> ignore
-    { new System.IDisposable with
-        member __.Dispose() = disposed <- true }
+type Context = Browser.CanvasRenderingContext2D
+type MsgUpdate<'Msg, 'Model> = 'Model -> 'Msg list -> float -> float -> 'Model
+type TimeUpdate<'Model> = 'Model -> float -> 'Model
+type View<'Model> = 'Model -> Context -> float -> unit
 
 type Canvas =
-    static member Path(ctx: Context, ?fillStyle, ?points: _[]) =
-        match points with
-        | None -> () // Throw error?
-        | Some points ->
-            let mutable init = false
-            ctx.beginPath()
-            for (x, y) in points do
-                if not init then
-                    init <- true
-                    ctx.moveTo(x, y)
-                else
-                    ctx.lineTo(x, y)
-            fillStyle |> Option.iter (fun x -> ctx.fillStyle <- x)
-            ctx.fill()
+    static member Path(ctx: Context, [<System.ParamArray>] points: _[]) =
+        let mutable init = false
+        ctx.beginPath()
+        for (x, y) in points do
+            if not init then
+                init <- true
+                ctx.moveTo(x, y)
+            else
+                ctx.lineTo(x, y)
+        ctx.fill()
 
-    static member WithContext(ctx: Context, ?translate, ?rotate, ?scale, ?render: Context->unit) =
-        match render with
-        | None -> () // Throw error?
-        | Some render ->
-            ctx.save()
-            Option.iter ctx.translate translate
-            Option.iter ctx.rotate rotate
-            Option.iter ctx.scale scale
-            render ctx
-            ctx.restore()
+    static member inline WithContext(ctx: Context, render: Context->unit) =
+        ctx.save()
+        render ctx
+        ctx.restore()
 
-    // TODO: This should be done automatically at the beginning of each view
-    // But we need a way to check the canvas width and height
-    static member Clear(ctx: Context, canvasWidth, canvasHeight) =
-        ctx.clearRect(0., 0., canvasWidth, canvasHeight)
+    static member Start<'Msg,'Model>
+            (canvasId: string, init: 'Model,
+             msgUpdate: MsgUpdate<'Msg, 'Model>, timeUpdate: TimeUpdate<'Model>,
+             view: View<'Model>, ?subscribe: Browser.HTMLCanvasElement->('Msg->unit)->'Model->unit) =
 
-    static member Start<'Msg,'Model>(canvasId: string, init: 'Model, tick: float->'Msg,
-                                        update: Update<'Msg,'Model>, view: View<'Msg,'Model>,
-                                        ?subscribe: Browser.HTMLCanvasElement->('Msg->unit)->'Model->unit) =
-
+        let mainLoop: MainLoop = JsInterop.importAll "mainloop.js"
         let canvasEl = Browser.document.getElementById(canvasId) :?> Browser.HTMLCanvasElement
         let ctx = canvasEl.getContext_2d()
+        let msgs = ResizeArray()
         let mutable model = init
-        // TODO: Implement asynchronous commands
-        let dispatch msg =
-            model <- update model msg
+        let dispatch msg = msgs.Add(msg)
         subscribe |> Option.iter (fun f -> f canvasEl dispatch model)
-        // TODO: Implement pause/resume mechanism
-        let disp = onAnimationFrame <| fun delta ->
-            model <- tick delta |> update model
-            view ctx dispatch model
-        ()
+        mainLoop
+            .setBegin(fun timestamp delta ->
+                let msgs2 = Seq.toList msgs
+                msgs.Clear()
+                model <- msgUpdate model msgs2 timestamp delta)
+            .setUpdate(fun delta ->
+                model <- timeUpdate model delta)
+            .setDraw(fun interpolationPercentage ->
+                view model ctx interpolationPercentage)
+            // TODO: Make the end function customizable
+            // For default behaviour see https://github.com/IceCreamYou/MainLoop.js/blob/a499baae76d4197dbf8178877cbdd2b903a00dc8/demo/index.html#L210
+            .setEnd(fun _fps panic ->
+                if panic then
+                    let discardedTime = mainLoop.resetFrameDelta() |> System.Math.Round
+                    Browser.console.warn("Main loop panicked, probably because the browser tab was put in the background. Discarding (ms)", discardedTime))
+            .start()
+        // mainLoop.setMaxAllowedFPS 20.

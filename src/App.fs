@@ -24,7 +24,6 @@ type Settings =
 type Position =
     { X : float
       Y : float }
-
     static member Empty =
         { X = 0.
           Y = 0. }
@@ -42,26 +41,14 @@ module Particle =
           /// Force applied, to the X coordinate
           Dx : float
           /// Force applied, to the Y coordiate
-          Dy : float
-          AngleX : float
-          AngleY : float
-          SpeedX : float
-          SpeedY : float
-          Radius : float }
-
-    let private rand = new Random()
+          Dy : float }
 
     let create index : Particle =
         { X = -50.
           Y = -50.
           Dx = 0.
           Dy = 0.
-          Id = index + 1
-          AngleX = Math.PI * 2. * rand.NextDouble()
-          AngleY = Math.PI * 2. * rand.NextDouble()
-          SpeedX = 0.03 * rand.NextDouble() + 0.03
-          SpeedY = 0.03 * rand.NextDouble() + 0.03
-          Radius = 150. }
+          Id = index + 1 }
 
     type Settings =
         { Width : float
@@ -69,7 +56,7 @@ module Particle =
           FollowSpeed : float
           MousePos : Position }
 
-    let update (particle : Particle) (particles : Particle array) (settings : Settings) =
+    let update (particle : Particle) (particles : Particle array) (settings : Settings) delta =
         // If this is not the first particle, then it follows the previous particle
         if particle.Id > 1 then
             // Target we are aiming at
@@ -77,50 +64,34 @@ module Particle =
             let dx = aim.X - particle.X
             let dy = aim.Y - particle.Y
 
-            { particle with X = particle.X + dx * settings.FollowSpeed
-                            Y = particle.Y + dy * settings.FollowSpeed
+            { particle with X = particle.X + dx * settings.FollowSpeed * delta
+                            Y = particle.Y + dy * settings.FollowSpeed * delta
                             Dx = dx
                             Dy = dy }
         else
-            // If the mouse never moved, then create random mouvements
-            if settings.MousePos.X = 0. && settings.MousePos.Y = 0. then
-                let dx = settings.Width / 2. + Math.Cos(particle.AngleX) * particle.Radius - particle.X
-                let dy = settings.Height / 2. + Math.Sin(particle.AngleY) * particle.Radius - particle.Y
+            // Follow the mouse
+            let dx = settings.MousePos.X - particle.X
+            let dy = settings.MousePos.Y - particle.Y
 
-                { particle with X = settings.Width / 2. + Math.Cos(particle.AngleX) * particle.Radius
-                                Y = settings.Height / 2. + Math.Sin(particle.AngleY) * particle.Radius
-                                AngleX = particle.AngleX + particle.SpeedX
-                                AngleY = particle.AngleY + particle.SpeedY
-                                Dx = dx
-                                Dy = dy }
-
-            else
-                // Follow the mouse
-                let dx = settings.MousePos.X - particle.X
-                let dy = settings.MousePos.Y - particle.Y
-
-                { particle with X = particle.X + dx * settings.FollowSpeed
-                                Y = particle.Y + dy * settings.FollowSpeed
-                                Dx = dx
-                                Dy = dy }
+            { particle with X = particle.X + dx * settings.FollowSpeed * delta
+                            Y = particle.Y + dy * settings.FollowSpeed * delta
+                            Dx = dx
+                            Dy = dy }
 
     let draw ctx (particle : Particle) (total : int) (width : int) =
-        let width = float width
-        let angle = Math.Atan2(particle.Dy, particle.Dx)
-        let scale = Math.Cos(Math.PI / 2. * (float particle.Id / float total))
-        Canvas.WithContext(ctx,
-            translate = (particle.X, particle.Y),
-            rotate = angle,
-            scale = (scale, scale),
-            render = fun ctx ->
-                Canvas.Path(ctx,
-                    fillStyle = !^"white",
-                    points = [|
-                        (-width / 2. * 1.732, -width / 2.)
-                        (0. ,0.)
-                        (-width / 2. * 1.732, width / 2.)
-                        (-width / 2. * 1.2, 0.)
-                    |])
+        Canvas.WithContext(ctx, fun ctx ->
+            let width = float width
+            let scale = Math.Cos(Math.PI / 2. * (float particle.Id / float total))
+            ctx.translate(particle.X, particle.Y)
+            ctx.rotate(Math.Atan2(particle.Dy, particle.Dx))
+            ctx.scale(scale, scale)
+            ctx.fillStyle <- !^"white"
+            Canvas.Path(ctx,
+                (-width / 2. * 1.732, -width / 2.),
+                (0. ,0.),
+                (-width / 2. * 1.732, width / 2.),
+                (-width / 2. * 1.2, 0.)
+            )
         )
 
 module Demo =
@@ -133,78 +104,39 @@ module Demo =
           MousePosition : Position }
 
     type Msg =
-        /// The tick message is trigger at 60fps, and is responsible for the animation trigger
-        | Tick of float
-        /// Event triggered when Mouse move over the canvas
         | MouseMove of Position
 
-        | UpdateCanvasSize of float * float
-        | UpdateNumOfSegments of int
-        | UpdateFollowSpeed of float
-        | UpdateSize of int
-
     let init (settings: Settings) =
-        { Particles =
-            [|
-                for index = 0 to settings.NumOfSegments do
-                    yield Particle.create index
-            |]
+        { Particles = [| for index = 0 to settings.NumOfSegments do
+                            yield Particle.create index |]
           Settings = settings
-          MousePosition =
-            { X = 0.
-              Y = 0. } }
+          MousePosition = { X = 0.; Y = 0. }
+        }
 
-    let update model = function
-        // Update the animation. TODO: Use delta
-        | Tick delta ->
-            // Update all particles positions
-            printfn "Updating..."
-            let particles =
-                model.Particles
-                |> Array.map (fun particle ->
-                    let settings : Particle.Settings =
-                        { Width = model.Settings.CanvasWidth
-                          Height = model.Settings.CanvasHeight
-                          FollowSpeed = model.Settings.FollowSpeed
-                          MousePos = model.MousePosition }
-                    Particle.update particle model.Particles settings
-                )
+    let msgUpdate model msgs _timestamp _delta =
+        let position =
+            (model.MousePosition, msgs) ||> List.fold (fun _pos -> function
+                | MouseMove newPosition -> newPosition
+            )
+        { model with MousePosition = position }
 
-            { model with Particles = particles }
+    let timeUpdate model delta =
+        let delta = delta / 10.
+        // Update all particles positions
+        let particles =
+            model.Particles
+            |> Array.map (fun particle ->
+                let settings : Particle.Settings =
+                    { Width = model.Settings.CanvasWidth
+                      Height = model.Settings.CanvasHeight
+                      FollowSpeed = model.Settings.FollowSpeed
+                      MousePos = model.MousePosition }
+                Particle.update particle model.Particles settings delta
+            )
+        { model with Particles = particles }
 
-        // Update the mouse position
-        | MouseMove newPosition ->
-            { model with MousePosition = newPosition }
-
-
-        | UpdateCanvasSize (width, height) ->
-            { model with Settings =
-                            { model.Settings with CanvasWidth = width
-                                                  CanvasHeight = height } }
-
-        | UpdateNumOfSegments newNum ->
-            { model with Particles =
-                            [|
-                                for index = 0 to newNum do
-                                    yield Particle.create index
-                            |]
-                         Settings =
-                            { model.Settings with NumOfSegments = newNum }
-                         MousePosition =
-                            { X = 0.
-                              Y = 0. } }
-
-        | UpdateFollowSpeed newSpeed ->
-            { model with Settings =
-                            { model.Settings with FollowSpeed = newSpeed } }
-
-        | UpdateSize newSize ->
-            { model with Settings =
-                            { model.Settings with Size = newSize } }
-
-
-    let view ctx dispatch (model : Model) =
-        Canvas.Clear(ctx, model.Settings.CanvasWidth, model.Settings.CanvasHeight)
+    let view (model : Model) (ctx: Context) _interpolationPercentage =
+        ctx.clearRect(0., 0., model.Settings.CanvasWidth, model.Settings.CanvasHeight)
         for particle in model.Particles do
             Particle.draw ctx particle model.Particles.Length model.Settings.Size
 
@@ -220,5 +152,4 @@ module Demo =
         )
 
 // App
-Canvas.Start("canvas", Demo.init Settings.Default, Demo.Tick,
-            Demo.update, Demo.view, subscribe = Demo.subscribe)
+Canvas.Start("canvas", Demo.init Settings.Default, Demo.msgUpdate, Demo.timeUpdate, Demo.view, Demo.subscribe)
